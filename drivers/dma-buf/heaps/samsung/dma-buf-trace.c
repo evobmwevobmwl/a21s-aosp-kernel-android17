@@ -18,7 +18,6 @@
 #include <linux/sched/signal.h>
 #include <linux/types.h>
 #include <linux/sort.h>
-#include <trace/hooks/mm.h>
 
 #include "heap_private.h"
 
@@ -153,9 +152,13 @@ static int dmabuf_trace_buffer_size_compare(const void *p1, const void *p2)
 	return 0;
 }
 
-#define prlogger(memlog_obj, fmt, ...) ((memlog_obj) ? \
-		 dmabuf_memlog_write_printf(memlog_obj, fmt, ##__VA_ARGS__) : \
-		 pr_info(fmt, ##__VA_ARGS__))
+#define prlogger(memlog_obj, fmt, ...)                     \
+	do {                                                   \
+		if (memlog_obj)                                   \
+			dmabuf_memlog_write_printf(memlog_obj, fmt, ##__VA_ARGS__); \
+		else                                               \
+			pr_info(fmt, ##__VA_ARGS__);                   \
+	} while (0)
 
 void __show_dmabuf_trace_info(struct memlog_obj *obj)
 {
@@ -982,7 +985,6 @@ int __init dmabuf_trace_create(void)
 	INIT_LIST_HEAD(&head_task.node);
 	INIT_LIST_HEAD(&head_task.ref_list);
 
-	register_trace_android_vh_show_mem(show_dmabuf_trace_handler, NULL);
 	dmabuf_trace_memlog_register();
 
 	pr_info("Initialized dma-buf trace successfully.\n");
