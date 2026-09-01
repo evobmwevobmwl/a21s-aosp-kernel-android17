@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       kernelsu_ref:
-        description: KernelSU tag or commit
+        description: RKSU legacy tag or commit (Samsung Linux 4.19 compatible)
         required: true
-        default: v3.3.0
+        default: v3.2.2-10-legacy
         type: string
       spoof_5_15_release:
         description: Report 5.15.136 to userspace (experimental)
@@ -35,7 +35,7 @@ jobs:
       ARCH: arm64
       SUBARCH: arm64
       DEFCONFIG: exynos850-a21snsxx_defconfig
-      KSU_REF: ${{ inputs.kernelsu_ref || 'v3.3.0' }}
+      KSU_REF: ${{ inputs.kernelsu_ref || 'v3.2.2-10-legacy' }}
       SPOOF_5_15: ${{ inputs.spoof_5_15_release || 'true' }}
 
     steps:
@@ -53,18 +53,16 @@ jobs:
 
       - name: Integrate KernelSU
         run: |
-          curl --fail --location --silent --show-error \
-            https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh \
-            --output /tmp/kernelsu-setup.sh
-          bash /tmp/kernelsu-setup.sh "$KSU_REF"
-          if ! grep -q 'define MODULE_IMPORT_NS' include/linux/module.h; then
-            sed -i \
-              '/^MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);$/d' \
-              KernelSU/kernel/core/init.c
-            echo 'Applied KernelSU MODULE_IMPORT_NS compatibility for Linux 4.19'
-          fi
-          git -C KernelSU apply \
-            "$GITHUB_WORKSPACE/ci/kernelsu-file-ops-linux-4.19.patch"
+          set -euo pipefail
+          git clone --filter=blob:none --no-checkout \
+            https://github.com/rsuntk/KernelSU.git KernelSU
+          git -C KernelSU fetch --depth 1 origin "$KSU_REF"
+          git -C KernelSU checkout --detach FETCH_HEAD
+          ln -s ../KernelSU/kernel drivers/kernelsu
+          printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> drivers/Makefile
+          sed -i '/^endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+          git apply "$GITHUB_WORKSPACE/ci/kernelsu-manual-hooks.patch"
+          echo "KernelSU legacy source: $(git -C KernelSU rev-parse HEAD)"
 
       - name: Configure kernel
         run: |
@@ -136,11 +134,21 @@ jobs:
           test "$(stat -c %s dist/dtbo.img)" -le 8388608
           tar -C dist -cf dist/boot.img.tar boot.img
 
+      - name: Download matching legacy KernelSU Manager
+        run: |
+          set -euo pipefail
+          curl --fail --location --show-error \
+            https://github.com/rsuntk/KernelSU/releases/download/v3.2.2-10-legacy/KernelSU_v3.2.2-10-legacy-42-g915b4872_32490-release.apk \
+            --output dist/KernelSU-legacy-Manager.apk
+          echo "78fe80980e65d30ced2a5f560680f8d6343d4443baee4c3bf1c82cbd6847147d  dist/KernelSU-legacy-Manager.apk" \
+            | sha256sum --check
+
       - name: Verify artifacts
         run: |
           test -s out/arch/arm64/boot/Image
           test -s dist/boot.img
           test -s dist/dtbo.img
+          test -s dist/KernelSU-legacy-Manager.apk
           file out/arch/arm64/boot/Image
           mkdir -p dist/dtbs
           cp out/arch/arm64/boot/Image dist/Image
@@ -157,7 +165,7 @@ jobs:
             make -s O=out ARCH=arm64 kernelrelease \
               > dist/reported-kernel-release.txt
           fi
-          sha256sum dist/Image dist/boot.img dist/dtbo.img > dist/SHA256SUMS
+          sha256sum dist/Image dist/boot.img dist/dtbo.img dist/KernelSU-legacy-Manager.apk > dist/SHA256SUMS
 
       - name: Upload kernel bring-up artifact
         uses: actions/upload-artifact@v4
