@@ -63,6 +63,8 @@ jobs:
               KernelSU/kernel/core/init.c
             echo 'Applied KernelSU MODULE_IMPORT_NS compatibility for Linux 4.19'
           fi
+          git -C KernelSU apply \
+            "$GITHUB_WORKSPACE/ci/kernelsu-file-ops-linux-4.19.patch"
 
       - name: Configure kernel
         run: |
