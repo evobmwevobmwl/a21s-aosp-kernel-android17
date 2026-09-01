@@ -1,0 +1,108 @@
+name: Build A21s Android 17 eBPF Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernelsu_ref:
+        description: KernelSU tag or commit
+        required: true
+        default: v3.3.0
+        type: string
+      spoof_5_15_release:
+        description: Report 5.15.136 to userspace (experimental)
+        required: true
+        default: true
+        type: boolean
+  push:
+    branches:
+      - lineage-24.0
+    paths:
+      - .github/workflows/build-a21s-android17-kernel.yml
+      - ci/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: a21s-a17-kernel-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      ARCH: arm64
+      SUBARCH: arm64
+      DEFCONFIG: exynos850-a21snsxx_defconfig
+      KSU_REF: ${{ inputs.kernelsu_ref || 'v3.3.0' }}
+      SPOOF_5_15: ${{ inputs.spoof_5_15_release || 'true' }}
+
+    steps:
+      - name: Checkout kernel
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison build-essential clang flex git lld llvm \
+            libelf-dev libssl-dev pahole python3 rsync zip
+
+      - name: Integrate KernelSU
+        run: |
+          curl --fail --location --silent --show-error \
+            https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh \
+            --output /tmp/kernelsu-setup.sh
+          bash /tmp/kernelsu-setup.sh "$KSU_REF"
+
+      - name: Configure kernel
+        run: |
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 "$DEFCONFIG"
+          scripts/kconfig/merge_config.sh -m -O out \
+            out/.config ci/android17-bpf.config
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
+          bash ci/verify-config.sh out/.config
+
+      - name: Build Image and device trees
+        run: |
+          set -o pipefail
+          release_args=()
+          if [[ "$SPOOF_5_15" == "true" ]]; then
+            release_args+=(KERNELRELEASE=5.15.136-a21s-a17-ebpf-ksu)
+          fi
+          make -j"$(nproc)" O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            KCFLAGS=-Wno-error "${release_args[@]}" Image modules dtbs \
+            2>&1 | tee build.log
+
+      - name: Verify artifacts
+        run: |
+          test -s out/arch/arm64/boot/Image
+          file out/arch/arm64/boot/Image
+          mkdir -p dist/dtbs
+          cp out/arch/arm64/boot/Image dist/Image
+          cp out/.config dist/kernel.config
+          cp out/System.map dist/System.map
+          cp build.log dist/build.log
+          find out/arch/arm64/boot/dts -type f -name '*.dtb' \
+            -exec cp {} dist/dtbs/ \; 2>/dev/null || true
+          printf '%s\n' "$KSU_REF" > dist/KernelSU-version.txt
+          if [[ "$SPOOF_5_15" == "true" ]]; then
+            printf '%s\n' '5.15.136-a21s-a17-ebpf-ksu (reported)' \
+              > dist/reported-kernel-release.txt
+          else
+            make -s O=out ARCH=arm64 kernelrelease \
+              > dist/reported-kernel-release.txt
+          fi
+          sha256sum dist/Image > dist/SHA256SUMS
+
+      - name: Upload kernel bring-up artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: a21s-android17-ebpf-ksu-${{ github.run_number }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
