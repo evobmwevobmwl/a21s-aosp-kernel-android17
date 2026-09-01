@@ -76,6 +76,9 @@ jobs:
       - name: KernelSU compatibility preflight
         run: |
           set -o pipefail
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            security/selinux/flask.h security/selinux/av_permissions.h
+
           make -j"$(nproc)" O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 \
             KCFLAGS=-Wno-error drivers/kernelsu/ \
             2>&1 | tee kernelsu-preflight.log
