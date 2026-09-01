@@ -57,6 +57,12 @@ jobs:
             https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh \
             --output /tmp/kernelsu-setup.sh
           bash /tmp/kernelsu-setup.sh "$KSU_REF"
+          if ! grep -q 'define MODULE_IMPORT_NS' include/linux/module.h; then
+            sed -i \
+              '/^MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);$/d' \
+              KernelSU/kernel/core/init.c
+            echo 'Applied KernelSU MODULE_IMPORT_NS compatibility for Linux 4.19'
+          fi
 
       - name: Configure kernel
         run: |
