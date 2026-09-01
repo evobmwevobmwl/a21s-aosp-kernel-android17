@@ -1,13 +1,16 @@
-From 68c34d9cce5de559fb4b62cc15a2f07e61b2ee5b Mon Sep 17 00:00:00 2001
+From 5553390151bc5ea915df1373423017f27db9c5f5 Mon Sep 17 00:00:00 2001
 From: evobmwevobmwl <evobmwevobmwl@users.noreply.github.com>
 Date: Tue, 1 Sep 2026 14:35:28 +0100
 Subject: [PATCH] compat: guard file operations missing before Linux 5.1
 
 ---
- kernel/infra/file_wrapper.c  | 9 +++++++++
- kernel/infra/seccomp_cache.c | 5 +++++
- kernel/infra/su_mount_ns.c   | 8 +++++++-
- 3 files changed, 21 insertions(+), 1 deletion(-)
+ kernel/infra/file_wrapper.c   |  9 +++++++++
+ kernel/infra/seccomp_cache.c  |  5 +++++
+ kernel/infra/su_mount_ns.c    |  8 +++++++-
+ kernel/manager/pkg_observer.c | 23 ++++++++++++++++++++---
+ kernel/policy/allowlist.c     |  5 +++++
+ kernel/policy/app_profile.c   |  2 ++
+ 6 files changed, 48 insertions(+), 4 deletions(-)
 
 diff --git a/kernel/infra/file_wrapper.c b/kernel/infra/file_wrapper.c
 index 66ea295..c9bbbd7 100644
@@ -124,6 +127,88 @@ index 0d45921..36c28e7 100644
  }
  
  void setup_mount_ns(int32_t ns_mode)
+diff --git a/kernel/manager/pkg_observer.c b/kernel/manager/pkg_observer.c
+index 512b992..c8363b4 100644
+--- a/kernel/manager/pkg_observer.c
++++ b/kernel/manager/pkg_observer.c
+@@ -21,12 +21,11 @@ struct watch_dir {
+ 
+ static struct fsnotify_group *g;
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)
+ static int ksu_handle_inode_event(struct fsnotify_mark *mark, u32 mask, struct inode *inode, struct inode *dir,
+                                   const struct qstr *file_name, u32 cookie)
+ {
+-    if (!file_name)
+-        return 0;
+-    if (mask & FS_ISDIR)
++    if (!file_name || (mask & FS_ISDIR))
+         return 0;
+     if (file_name->len == 13 && !memcmp(file_name->name, "packages.list", 13)) {
+         pr_info("packages.list detected: %d\n", mask);
+@@ -38,6 +37,24 @@ static int ksu_handle_inode_event(struct fsnotify_mark *mark, u32 mask, struct i
+ static const struct fsnotify_ops ksu_ops = {
+     .handle_inode_event = ksu_handle_inode_event,
+ };
++#else
++static int ksu_handle_event(struct fsnotify_group *group, struct inode *inode, u32 mask, const void *data,
++                            int data_type, const unsigned char *file_name, u32 cookie,
++                            struct fsnotify_iter_info *iter_info)
++{
++    if (!file_name || (mask & FS_ISDIR))
++        return 0;
++    if (!strcmp(file_name, "packages.list")) {
++        pr_info("packages.list detected: %d\n", mask);
++        track_throne(false);
++    }
++    return 0;
++}
++
++static const struct fsnotify_ops ksu_ops = {
++    .handle_event = ksu_handle_event,
++};
++#endif
+ 
+ static int add_mark_on_inode(struct inode *inode, u32 mask, struct fsnotify_mark **out)
+ {
+diff --git a/kernel/policy/allowlist.c b/kernel/policy/allowlist.c
+index 8cf50d6..7592c4d 100644
+--- a/kernel/policy/allowlist.c
++++ b/kernel/policy/allowlist.c
+@@ -3,6 +3,7 @@
+ #include <linux/rculist.h>
+ #include <linux/mutex.h>
+ #include <linux/task_work.h>
++#include <linux/sched/task.h>
+ #include <linux/capability.h>
+ #include <linux/compiler.h>
+ #include <linux/fs.h>
+@@ -473,7 +474,11 @@ void ksu_persistent_allow_list()
+         goto put_task;
+     }
+     cb->func = do_persistent_allow_list;
++    #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)
+     if (task_work_add(tsk, cb, TWA_RESUME)) {
++#else
++    if (task_work_add(tsk, cb, true)) {
++#endif
+         kfree(cb);
+         pr_warn("save_allow_list add task_work failed\n");
+     }
+diff --git a/kernel/policy/app_profile.c b/kernel/policy/app_profile.c
+index 518ef41..676f0b2 100644
+--- a/kernel/policy/app_profile.c
++++ b/kernel/policy/app_profile.c
+@@ -101,7 +101,9 @@ static void disable_seccomp(void)
+ 
+     current->seccomp.mode = 0;
+     current->seccomp.filter = NULL;
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)
+     atomic_set(&current->seccomp.filter_count, 0);
++#endif
+     spin_unlock_irq(&current->sighand->siglock);
+ 
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0)
 -- 
 2.43.0
 
