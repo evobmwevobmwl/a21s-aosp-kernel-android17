@@ -73,6 +73,14 @@ jobs:
             out/.config ci/android17-bpf.config
           make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
           bash ci/verify-config.sh out/.config
+      - name: KernelSU compatibility preflight
+        run: |
+          set -o pipefail
+          make -j"$(nproc)" O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            KCFLAGS=-Wno-error drivers/kernelsu/ \
+            2>&1 | tee kernelsu-preflight.log
+
+
 
       - name: Build Image and device trees
         run: |
