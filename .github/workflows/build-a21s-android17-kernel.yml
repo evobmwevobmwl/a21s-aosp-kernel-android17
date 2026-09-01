@@ -77,9 +77,42 @@ jobs:
             KCFLAGS=-Wno-error "${release_args[@]}" Image modules dtbs \
             2>&1 | tee build.log
 
+      - name: Build boot.img and dtbo.img
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          test -s out/arch/arm64/boot/dts/exynos/exynos3830.dtb
+          git clone --depth 1 \
+            https://android.googlesource.com/platform/system/tools/mkbootimg \
+            /tmp/mkbootimg
+          curl --fail --location --silent --show-error \
+            'https://android.googlesource.com/platform/system/libufdt/+/refs/heads/main/utils/src/mkdtboimg.py?format=TEXT' \
+            | base64 --decode > /tmp/mkdtboimg.py
+          curl --fail --location --silent --show-error \
+            https://raw.githubusercontent.com/LineageOS/android_device_samsung_a21s-common/lineage-24.0/configs/kernel/a21s.cfg \
+            --output /tmp/a21s.cfg
+          : > out/empty-ramdisk
+          python3 /tmp/mkbootimg/mkbootimg.py \
+            --kernel out/arch/arm64/boot/Image \
+            --ramdisk out/empty-ramdisk \
+            --dtb out/arch/arm64/boot/dts/exynos/exynos3830.dtb \
+            --header_version 2 --base 0x10000000 --pagesize 2048 \
+            --kernel_offset 0x00008000 --ramdisk_offset 0x01000000 \
+            --second_offset 0xf0000000 --tags_offset 0x00000100 \
+            --dtb_offset 0x00000000 --os_version 17.0.0 \
+            --os_patch_level 2026-09 --output dist/boot.img
+          python3 /tmp/mkdtboimg.py cfg_create dist/dtbo.img \
+            /tmp/a21s.cfg \
+            --dtb-dir out/arch/arm64/boot/dts/samsung/a21s
+          test "$(stat -c %s dist/boot.img)" -le 37748736
+          test "$(stat -c %s dist/dtbo.img)" -le 8388608
+          tar -C dist -cf dist/boot.img.tar boot.img
+
       - name: Verify artifacts
         run: |
           test -s out/arch/arm64/boot/Image
+          test -s dist/boot.img
+          test -s dist/dtbo.img
           file out/arch/arm64/boot/Image
           mkdir -p dist/dtbs
           cp out/arch/arm64/boot/Image dist/Image
@@ -96,7 +129,7 @@ jobs:
             make -s O=out ARCH=arm64 kernelrelease \
               > dist/reported-kernel-release.txt
           fi
-          sha256sum dist/Image > dist/SHA256SUMS
+          sha256sum dist/Image dist/boot.img dist/dtbo.img > dist/SHA256SUMS
 
       - name: Upload kernel bring-up artifact
         uses: actions/upload-artifact@v4
