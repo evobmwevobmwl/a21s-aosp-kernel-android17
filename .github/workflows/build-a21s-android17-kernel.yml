@@ -49,7 +49,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             bc bison build-essential clang flex git lld llvm \
-            libelf-dev libssl-dev pahole python3 rsync zip
+            jq libelf-dev libssl-dev pahole python3 rsync zip
 
       - name: Integrate KernelSU
         run: |
@@ -85,22 +85,31 @@ jobs:
           git clone --depth 1 \
             https://android.googlesource.com/platform/system/tools/mkbootimg \
             /tmp/mkbootimg
+          base_boot_url="$(curl --fail --location --silent --show-error \
+            https://download.lineageos.org/api/v2/devices/a21s/builds \
+            | jq -r '.[0].files[] | select(.filename == "boot.img") | .url')"
+          test -n "$base_boot_url"
+          test "$base_boot_url" != null
+          curl --fail --location --show-error "$base_boot_url" \
+            --output /tmp/a21s-base-boot.img
+          mkdir -p /tmp/a21s-base-boot
+          python3 /tmp/mkbootimg/unpack_bootimg.py \
+            --boot_img /tmp/a21s-base-boot.img \
+            --out /tmp/a21s-base-boot --format mkbootimg -0 \
+            > /tmp/a21s-mkbootimg-args
           curl --fail --location --silent --show-error \
             'https://android.googlesource.com/platform/system/libufdt/+/refs/heads/main/utils/src/mkdtboimg.py?format=TEXT' \
             | base64 --decode > /tmp/mkdtboimg.py
           curl --fail --location --silent --show-error \
             https://raw.githubusercontent.com/LineageOS/android_device_samsung_a21s-common/lineage-24.0/configs/kernel/a21s.cfg \
             --output /tmp/a21s.cfg
-          : > out/empty-ramdisk
+          cp out/arch/arm64/boot/Image /tmp/a21s-base-boot/kernel
+          cp out/arch/arm64/boot/dts/exynos/exynos3830.dtb /tmp/a21s-base-boot/dtb
+          mkbootimg_args=()
+          while IFS= read -r -d '' arg; do mkbootimg_args+=("$arg"); done \
+            < /tmp/a21s-mkbootimg-args
           python3 /tmp/mkbootimg/mkbootimg.py \
-            --kernel out/arch/arm64/boot/Image \
-            --ramdisk out/empty-ramdisk \
-            --dtb out/arch/arm64/boot/dts/exynos/exynos3830.dtb \
-            --header_version 2 --base 0x10000000 --pagesize 2048 \
-            --kernel_offset 0x00008000 --ramdisk_offset 0x01000000 \
-            --second_offset 0xf0000000 --tags_offset 0x00000100 \
-            --dtb_offset 0x00000000 --os_version 17.0.0 \
-            --os_patch_level 2026-09 --output dist/boot.img
+            "${mkbootimg_args[@]}" --output dist/boot.img
           python3 /tmp/mkdtboimg.py cfg_create dist/dtbo.img \
             /tmp/a21s.cfg \
             --dtb-dir out/arch/arm64/boot/dts/samsung/a21s
