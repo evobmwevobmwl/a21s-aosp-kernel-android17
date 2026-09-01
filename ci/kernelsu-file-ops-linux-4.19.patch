@@ -1,11 +1,12 @@
-From 832f8371ebf19137cc7c89b451952f3fb306b6a4 Mon Sep 17 00:00:00 2001
+From 9151c5d431833cdacdcb29bc3670dedaf622a6f4 Mon Sep 17 00:00:00 2001
 From: evobmwevobmwl <evobmwevobmwl@users.noreply.github.com>
 Date: Tue, 1 Sep 2026 14:35:28 +0100
 Subject: [PATCH] compat: guard file operations missing before Linux 5.1
 
 ---
- kernel/infra/file_wrapper.c | 9 +++++++++
- 1 file changed, 9 insertions(+)
+ kernel/infra/file_wrapper.c  | 9 +++++++++
+ kernel/infra/seccomp_cache.c | 5 +++++
+ 2 files changed, 14 insertions(+)
 
 diff --git a/kernel/infra/file_wrapper.c b/kernel/infra/file_wrapper.c
 index 66ea295..c9bbbd7 100644
@@ -64,6 +65,22 @@ index 66ea295..c9bbbd7 100644
      p->ops.fadvise = fp->f_op->fadvise ? ksu_wrapper_fadvise : NULL;
  
  #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+diff --git a/kernel/infra/seccomp_cache.c b/kernel/infra/seccomp_cache.c
+index a9d2b63..6948580 100644
+--- a/kernel/infra/seccomp_cache.c
++++ b/kernel/infra/seccomp_cache.c
+@@ -5,6 +5,11 @@
+ #include <linux/uaccess.h>
+ #include <linux/filter.h>
+ #include <linux/seccomp.h>
++#include <asm/unistd.h>
++
++#ifndef SECCOMP_ARCH_NATIVE_NR
++#define SECCOMP_ARCH_NATIVE_NR __NR_syscalls
++#endif
+ #include "klog.h" // IWYU pragma: keep
+ #include "infra/seccomp_cache.h"
+ 
 -- 
 2.43.0
 
